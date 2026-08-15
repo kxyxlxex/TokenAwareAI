@@ -14,6 +14,8 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import torch
@@ -32,7 +34,17 @@ from tokenaware.data import load_split
 from tokenaware.generate import generate_rollout, load_model
 
 
+def timestamp() -> str:
+    return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def elapsed(seconds: float) -> str:
+    return str(timedelta(seconds=round(seconds)))
+
+
 def main() -> None:
+    run_started = time.monotonic()
+    print(f"[{timestamp()}] root rollout job started", flush=True)
     p = argparse.ArgumentParser()
     p.add_argument("--split", choices=("train", "val"), default="train")
     p.add_argument("--k", type=int, default=ROOT_K)
@@ -51,10 +63,16 @@ def main() -> None:
     out_dir = ARTIFACTS_DIR / "rollouts" / "root" / args.split
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    load_started = time.monotonic()
     model, tokenizer = load_model(
         model_id=args.model, dtype=args.dtype, load_in_4bit=args.load_in_4bit
     )
+    print(
+        f"[{timestamp()}] model ready after {elapsed(time.monotonic() - load_started)}",
+        flush=True,
+    )
     for i, problem in enumerate(problems):
+        problem_started = time.monotonic()
         dest = out_dir / f"{problem['problem_id'].replace(':', '_')}.jsonl"
         hid_dest = dest.with_suffix(".pt")
         if dest.exists() and hid_dest.exists():
@@ -87,11 +105,22 @@ def main() -> None:
             }
             records.append(rec)
             print(
-                f"[{i+1}/{len(problems)}] {problem['problem_id']} "
-                f"s={s} tok={r.n_tokens} steps={len(r.steps)} ok={r.correct}"
+                f"[{timestamp()}] [{i+1}/{len(problems)}] {problem['problem_id']} "
+                f"s={s} tok={r.n_tokens} steps={len(r.steps)} ok={r.correct}",
+                flush=True,
             )
         dest.write_text("\n".join(json.dumps(x) for x in records) + "\n")
         torch.save(hidden_pack, hid_dest)
+        print(
+            f"[{timestamp()}] finished {problem['problem_id']} in "
+            f"{elapsed(time.monotonic() - problem_started)}",
+            flush=True,
+        )
+    print(
+        f"[{timestamp()}] root rollout job finished in "
+        f"{elapsed(time.monotonic() - run_started)}",
+        flush=True,
+    )
 
 
 if __name__ == "__main__":

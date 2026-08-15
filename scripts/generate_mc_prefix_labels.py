@@ -14,6 +14,8 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
+from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path.cwd() / "src"))
@@ -31,7 +33,17 @@ from tokenaware.generate import generate_continuation, load_model
 from tokenaware.mc import mc_label, read_jsonl, select_prefix_states
 
 
+def timestamp() -> str:
+    return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def elapsed(seconds: float) -> str:
+    return str(timedelta(seconds=round(seconds)))
+
+
 def main() -> None:
+    run_started = time.monotonic()
+    print(f"[{timestamp()}] MC prefix job started", flush=True)
     p = argparse.ArgumentParser()
     p.add_argument("--split", choices=("train", "val"), default="train")
     p.add_argument("--k", type=int, default=MC_K)
@@ -71,10 +83,16 @@ def main() -> None:
         print("nothing to do; generate root rollouts first or outputs already exist")
         return
 
+    load_started = time.monotonic()
     model, tokenizer = load_model(
         model_id=args.model, dtype=args.dtype, load_in_4bit=args.load_in_4bit
     )
+    print(
+        f"[{timestamp()}] model ready after {elapsed(time.monotonic() - load_started)}",
+        flush=True,
+    )
     for problem_i, (problem, source, dest) in enumerate(pending, start=1):
+        problem_started = time.monotonic()
         states = select_prefix_states(
             read_jsonl(source), traces_per_problem=args.traces_per_problem
         )
@@ -97,9 +115,11 @@ def main() -> None:
                 result["sample_id"] = sample_id
                 continuations.append(result)
                 print(
-                    f"[{problem_i}/{len(pending)}] {problem['problem_id']} "
+                    f"[{timestamp()}] [{problem_i}/{len(pending)}] "
+                    f"{problem['problem_id']} "
                     f"state={state_i + 1}/{len(states)} mc={sample_id + 1}/{args.k} "
-                    f"tok={result['n_tokens']} ok={result['correct']}"
+                    f"tok={result['n_tokens']} ok={result['correct']}",
+                    flush=True,
                 )
 
             records.append(
@@ -121,7 +141,16 @@ def main() -> None:
         temp = dest.with_suffix(".jsonl.tmp")
         temp.write_text("\n".join(json.dumps(record) for record in records) + "\n")
         temp.replace(dest)
-        print(f"wrote {dest} ({len(records)} prefix states)")
+        print(
+            f"[{timestamp()}] wrote {dest} ({len(records)} prefix states) in "
+            f"{elapsed(time.monotonic() - problem_started)}",
+            flush=True,
+        )
+    print(
+        f"[{timestamp()}] MC prefix job finished in "
+        f"{elapsed(time.monotonic() - run_started)}",
+        flush=True,
+    )
 
 
 if __name__ == "__main__":
