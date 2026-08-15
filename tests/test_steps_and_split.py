@@ -5,6 +5,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from tokenaware.data import load_math_train, stratified_split
+from tokenaware.mc import mc_label, select_prefix_states
 from tokenaware.scoring import answers_equal, gold_from_solution
 from tokenaware.steps import extract_boxed, parse_steps
 
@@ -25,6 +26,33 @@ def test_gold_from_solution():
     sol = "We have $x=3$.\n\\boxed{3}"
     assert gold_from_solution(sol) == "3"
     assert answers_equal("3", "3")
+
+
+def test_select_prefix_states_and_mc_label():
+    steps = [
+        {"char_end": 5, "tokens_remaining_this_trace": 30},
+        {"char_end": 10, "tokens_remaining_this_trace": 20},
+        {"char_end": 15, "tokens_remaining_this_trace": 10},
+        {"char_end": 20, "tokens_remaining_this_trace": 0},
+    ]
+    rollouts = [
+        {"sample_id": i, "text": "x" * 20, "correct": i == 0, "steps": steps}
+        for i in range(3)
+    ]
+    states = select_prefix_states(rollouts)
+    assert len(states) == 6
+    assert {s["source_sample_id"] for s in states} == {0, 1}
+    assert [s["prefix_char_end"] for s in states[:3]] == [5, 10, 15]
+
+    label = mc_label(
+        [
+            {"correct": True, "n_tokens": 8, "truncated": False},
+            {"correct": False, "n_tokens": 12, "truncated": True},
+        ]
+    )
+    assert label["v_mc"] == 0.5
+    assert label["t_mc_mean"] == 10
+    assert label["n_truncated"] == 1
 
 
 def test_split_sizes_and_no_leak():

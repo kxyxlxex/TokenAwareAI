@@ -103,6 +103,75 @@ def build_prompt(tokenizer, problem: str) -> str:
         return tokenizer.apply_chat_template(messages, **kwargs)
 
 
+def _finished_generation(
+    gen_ids: list[int],
+    max_new_tokens: int,
+    eos_token_id: int | list[int] | None,
+) -> bool:
+    eos_ids = {eos_token_id} if isinstance(eos_token_id, int) else set(eos_token_id or [])
+    return len(gen_ids) < max_new_tokens or bool(gen_ids and gen_ids[-1] in eos_ids)
+
+
+@torch.inference_mode()
+def generate_continuation(
+    model,
+    tokenizer,
+    problem: str,
+    prefix: str,
+    gold: str,
+    max_new_tokens: int = MAX_NEW_TOKENS,
+) -> dict:
+    """Sample a fresh completion after an exact generated reasoning prefix.
+
+    The returned token count covers only newly generated continuation tokens.
+    Correctness is scored on prefix + continuation, which forms the full solution.
+    """
+    prompt = build_prompt(tokenizer, problem)
+    prompt_inputs = tokenizer(prompt, return_tensors="pt")
+    prompt_ids = prompt_inputs["input_ids"]
+    prefix_ids = tokenizer(prefix, return_tensors="pt", add_special_tokens=False)["input_ids"]
+    input_ids = torch.cat((prompt_ids, prefix_ids), dim=1)
+    device = next(model.parameters()).device
+    input_ids = input_ids.to(device)
+    input_len = input_ids.shape[1]
+
+    eos_ids = (
+        {tokenizer.eos_token_id}
+        if isinstance(tokenizer.eos_token_id, int)
+        else set(tokenizer.eos_token_id or [])
+    )
+    if prefix_ids.numel() and int(prefix_ids[0, -1]) in eos_ids:
+        prefix_ids = prefix_ids[:, :-1]
+        input_ids = torch.cat((prompt_ids, prefix_ids), dim=1).to(device)
+        input_len = input_ids.shape[1]
+    attention_mask = torch.cat(
+        (prompt_inputs["attention_mask"], torch.ones_like(prefix_ids)), dim=1
+    ).to(device)
+
+    gen = model.generate(
+        input_ids=input_ids,
+        attention_mask=attention_mask,
+        do_sample=True,
+        temperature=TEMPERATURE,
+        top_k=TOP_K,
+        top_p=TOP_P,
+        max_new_tokens=max_new_tokens,
+        pad_token_id=tokenizer.eos_token_id,
+    )
+    gen_ids = gen[0, input_len:].tolist()
+    continuation = tokenizer.decode(gen_ids, skip_special_tokens=True)
+    full_text = prefix + continuation
+    return {
+        "text": continuation,
+        "n_tokens": len(gen_ids),
+        "truncated": not _finished_generation(
+            gen_ids, max_new_tokens, tokenizer.eos_token_id
+        ),
+        "boxed": extract_boxed(full_text),
+        "correct": rollout_correct(full_text, gold),
+    }
+
+
 @torch.inference_mode()
 def generate_rollout(
     model,
@@ -131,10 +200,8 @@ def generate_rollout(
     )
     gen_ids = gen[0, prompt_len:].tolist()
     text = tokenizer.decode(gen_ids, skip_special_tokens=True)
-    truncated = len(gen_ids) >= max_new_tokens and (
-        gen_ids[-1] not in set(tokenizer.eos_token_id)
-        if isinstance(tokenizer.eos_token_id, int)
-        else set(tokenizer.eos_token_id or [])
+    truncated = not _finished_generation(
+        gen_ids, max_new_tokens, tokenizer.eos_token_id
     )
 
     steps = parse_steps(text)
