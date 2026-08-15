@@ -1,0 +1,17 @@
+# Requires Python >=3.10 for Qwen3/transformers and math-verify.
+# macOS system Python is often 3.9 — use: brew install python@3.12 && python3.12 -m venv .venv
+torch>=2.4.0
+transformers>=4.51.0
+accelerate>=0.34.0
+huggingface_hub>=0.26.0
+datasets>=3.0.0
+safetensors>=0.4.0
+numpy>=1.26.0
+scipy>=1.11.0
+scikit-learn>=1.4.0
+tqdm>=4.66.0
+math-verify>=0.1.0
+
+# Colab T4 (16GB): pip install bitsandbytes
+# bitsandbytes>=0.43.0
+# vllm>=0.8.5
