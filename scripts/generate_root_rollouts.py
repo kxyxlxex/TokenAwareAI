@@ -55,6 +55,7 @@ def output_matches(path: Path, *, k: int, model_id: str, dtype: str) -> bool:
 def main() -> None:
     run_started = time.monotonic()
     print(f"[{timestamp()}] root rollout job started", flush=True)
+    print(f"[{timestamp()}] ARTIFACTS_DIR={ARTIFACTS_DIR}", flush=True)
     p = argparse.ArgumentParser()
     p.add_argument("--split", choices=("train", "val"), default="train")
     p.add_argument("--k", type=int, default=ROOT_K)

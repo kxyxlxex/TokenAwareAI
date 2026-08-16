@@ -2,9 +2,23 @@
 
 Last updated 16 Aug 2026.
 
-This run happens on a remote Lambda instance. Your laptop may disconnect, sleep, or shut
-down after the job is running in `tmux`. Lambda continues charging until you **terminate**
-the instance.
+This run happens entirely on a remote Lambda instance. Code, model weights, MATH split,
+rollouts, MC labels, and logs all live on that machine. Your laptop may disconnect, sleep,
+or shut down after the job is running in `tmux`. Use `pull_artifacts.py` only when you
+want a local backup copy. Lambda continues charging until you **terminate** the instance.
+
+## Where things live
+
+| Item | During the job | After `pull_artifacts` |
+|---|---|---|
+| Repo / scripts | Lambda `~/TokenAwareAI` | Already on your Mac clone |
+| Qwen3-8B weights | Lambda `~/tokenaware-data/huggingface` (~16.4 GB) | Stay on Lambda; do not pull |
+| Split JSON | Lambda `$TOKENAWARE_ARTIFACTS/splits/` | Optional local copy |
+| Root + MC outputs | Lambda `$TOKENAWARE_ARTIFACTS/` | Local `artifacts/` backup |
+| Logs | Lambda `$TOKENAWARE_ARTIFACTS/logs/` | Optional local copy |
+
+Generation scripts never write to your Mac. They only use `$TOKENAWARE_ARTIFACTS` and
+`$HF_HOME` on the instance.
 
 ## Recommended machine
 
@@ -27,31 +41,23 @@ Lambda's public price on 16 Aug 2026 is $3.29/GPU-hour for H100 PCIe. Pricing an
 availability change, so verify [Lambda pricing](https://lambda.ai/pricing) before launch.
 Billing is by the minute while the instance is running, including idle time.
 
-## 1. Create persistent storage first
+## 1. Storage choice
 
-In the Lambda Cloud console:
+Use the H100 PCIe instance's included **1 TB root volume**. Expected generated corpus is
+about **4.59 GB** (reserve 6 GB). This avoids separate filesystem charges.
 
-1. Open **Filesystems**.
-2. Create a filesystem in the same region where an H100 PCIe is available.
-3. Name it `tokenaware-data`.
-4. Allocate **50 GB** or Lambda's larger minimum. The expected persistent footprint is
-   under 25 GB; 50 GB leaves safe headroom.
-5. Launch the H100 in that same region and attach `tokenaware-data`.
+Everything for this phase stays on that volume. Your laptop is offline-safe during
+generation. Before you terminate the instance, pull a backup with `pull_artifacts.py`
+(§7). Paid Lambda filesystem storage is unnecessary for this corpus.
 
-The exact mount path is shown in the instance/Filesystem UI. Confirm it over SSH:
+## 2. Connect and put the project on the instance
+
+Push the latest repo from your Mac first, so Lambda clones the current scripts:
 
 ```bash
-df -h
-ls /lambda
+# on your Mac, after committing locally
+git push origin main
 ```
-
-In this guide the attached mount is called `/lambda/nfs`. If Lambda shows another path,
-replace `/lambda/nfs` everywhere below. Never assume a mount exists—verify with `df -h`.
-
-Persistent filesystems continue to incur storage charges after the GPU instance is
-terminated. Delete the filesystem only after downloading or otherwise backing up results.
-
-## 2. Connect and prepare directories
 
 Copy the SSH command from the instance page and run it on your laptop:
 
@@ -63,9 +69,8 @@ On the instance:
 
 ```bash
 set -e
-export PERSIST=/lambda/nfs
-test -d "$PERSIST"
-mkdir -p "$PERSIST/TokenAwareAI/artifacts" "$PERSIST/huggingface"
+export WORK="$HOME/tokenaware-data"
+mkdir -p "$WORK/artifacts" "$WORK/huggingface"
 
 git clone https://github.com/kxyxlxex/TokenAwareAI.git "$HOME/TokenAwareAI"
 cd "$HOME/TokenAwareAI"
@@ -79,12 +84,12 @@ python -m pip install -r requirements.txt
 For a private repository, use an SSH deploy key or a fine-grained GitHub token. Do not put
 a token in a checked-in script or shell history.
 
-Set persistent paths:
+Force all outputs and the model cache onto the instance disk:
 
 ```bash
 export TOKENAWARE_ROOT="$HOME/TokenAwareAI"
-export TOKENAWARE_ARTIFACTS="$PERSIST/TokenAwareAI/artifacts"
-export HF_HOME="$PERSIST/huggingface"
+export TOKENAWARE_ARTIFACTS="$HOME/tokenaware-data/artifacts"
+export HF_HOME="$HOME/tokenaware-data/huggingface"
 export TRANSFORMERS_CACHE="$HF_HOME/hub"
 ```
 
@@ -92,20 +97,33 @@ Save them for future SSH sessions:
 
 ```bash
 cat >> "$HOME/.bashrc" <<'EOF'
-export PERSIST=/lambda/nfs
 export TOKENAWARE_ROOT="$HOME/TokenAwareAI"
-export TOKENAWARE_ARTIFACTS="$PERSIST/TokenAwareAI/artifacts"
-export HF_HOME="$PERSIST/huggingface"
+export TOKENAWARE_ARTIFACTS="$HOME/tokenaware-data/artifacts"
+export HF_HOME="$HOME/tokenaware-data/huggingface"
 export TRANSFORMERS_CACHE="$HF_HOME/hub"
 EOF
 ```
 
-If your mount differs, edit `PERSIST` before appending this block.
+Confirm the scripts will write on the cloud, not under a Mac path:
+
+```bash
+cd "$HOME/TokenAwareAI"
+source .venv/bin/activate
+python - <<'PY'
+from tokenaware.config import ARTIFACTS_DIR, MODEL_ID, REPO_ROOT
+import os
+print("REPO_ROOT       =", REPO_ROOT)
+print("ARTIFACTS_DIR   =", ARTIFACTS_DIR)
+print("HF_HOME         =", os.environ.get("HF_HOME"))
+print("MODEL_ID        =", MODEL_ID)
+assert str(ARTIFACTS_DIR).startswith(str(os.path.expanduser("~/tokenaware-data"))), ARTIFACTS_DIR
+print("cloud paths OK")
+PY
+```
 
 Optional Hugging Face authentication avoids unauthenticated rate limits:
 
 ```bash
-source "$HOME/TokenAwareAI/.venv/bin/activate"
 huggingface-cli login
 ```
 
@@ -117,14 +135,16 @@ source .venv/bin/activate
 nvidia-smi
 python -c "import torch; print(torch.cuda.get_device_name()); print(torch.cuda.is_bf16_supported())"
 python scripts/make_splits.py
+ls "$TOKENAWARE_ARTIFACTS/splits/math_probe_split.json"
 ```
 
-The split and every generated artifact now live on the persistent filesystem, not on the
-instance's disposable root disk.
+`make_splits.py` writes the train/val problem list into
+`$TOKENAWARE_ARTIFACTS/splits/math_probe_split.json` on the instance. Every later script
+loads that same file.
 
 ## 4. Benchmark before the full bill
 
-Run one 25-problem pilot in `tmux`. `tee` records logs persistently.
+Run one 25-problem pilot in `tmux`. `tee` records logs on the instance.
 
 ```bash
 tmux new -s tokenaware
@@ -140,6 +160,12 @@ python scripts/generate_mc_prefix_labels.py \
   --split train --limit 25 --k 8 --batch-size 8 --dtype bfloat16 \
   2>&1 | tee "$TOKENAWARE_ARTIFACTS/logs/mc-pilot.log"
 ```
+
+These scripts load:
+
+- split: `$TOKENAWARE_ARTIFACTS/splits/math_probe_split.json`
+- model: Hub `Qwen/Qwen3-8B` into `$HF_HOME`
+- outputs: `$TOKENAWARE_ARTIFACTS/rollouts/...` and `$TOKENAWARE_ARTIFACTS/labels/...`
 
 Detach without stopping it: press `Ctrl-B`, release, then press `D`.
 
@@ -200,7 +226,7 @@ After reconnecting:
 tmux attach -t tokenaware-full
 ```
 
-Or inspect persistent logs:
+Or inspect the saved logs:
 
 ```bash
 tail -f "$TOKENAWARE_ARTIFACTS/logs/root-full.log"
@@ -223,18 +249,54 @@ Expected final counts are 2,000 root JSONL files and up to 2,000 MC JSONL files.
 problems may be absent if neither selected root trace contained parseable steps; inspect
 the MC log for `skip no parseable prefixes`.
 
-Check available persistent space:
+Check available instance space:
 
 ```bash
-df -h "$PERSIST"
+df -h "$HOME"
 du -sh "$TOKENAWARE_ARTIFACTS" "$HF_HOME"
 ```
 
-## 7. Validate and stop billing
+## 7. When and how to call `pull_artifacts`
 
-When both commands finish:
+`pull_artifacts.py` runs on your **Mac**. It does not run on Lambda. It only mirrors
+completed files from the instance to a local backup.
+
+### When
+
+| Situation | Call it? |
+|---|---|
+| Job still running; you want a mid-run backup | Optional |
+| Job finished; before terminating the instance | **Required** |
+| Laptop asleep during generation | No — wait until you want a backup |
+| After terminating the instance | Too late — data on the instance disk is gone |
+
+### How
+
+On the Mac, with the instance still up and SSH reachable:
 
 ```bash
+cd /Users/kylexu/TokenAwareAI
+python3 scripts/pull_artifacts.py \
+  --remote ubuntu@INSTANCE_IP:~/tokenaware-data/artifacts \
+  --local /Users/kylexu/TokenAwareAI/artifacts
+```
+
+Replace `INSTANCE_IP` with the Lambda public IP. The Mac clone must contain
+`scripts/pull_artifacts.py` (push/pull git if needed).
+
+What it does:
+
+- copies **all completed** remote artifacts in one rsync;
+- never pulls `.tmp` in-progress files;
+- pulls a root problem only when **both** its `.jsonl` and `.pt` exist;
+- uses `rsync --checksum`, so already-identical local files are skipped by content;
+- does not delete local files that are absent remotely;
+- never transfers `~/tokenaware-data/huggingface`.
+
+After the full job, validate on the instance, pull once more, then terminate:
+
+```bash
+# on Lambda
 python - <<'PY'
 import os
 from pathlib import Path
@@ -246,35 +308,45 @@ PY
 du -sh "$TOKENAWARE_ARTIFACTS"
 ```
 
-Download or sync a backup if desired. Then use the Lambda console/API to **terminate the
-GPU instance**. Closing SSH, detaching `tmux`, or shutting down your laptop does not stop
-GPU billing.
+```bash
+# on Mac
+python3 scripts/pull_artifacts.py \
+  --remote ubuntu@INSTANCE_IP:~/tokenaware-data/artifacts \
+  --local /Users/kylexu/TokenAwareAI/artifacts
+```
 
-Keep the filesystem for probe training or delete it after a verified backup. Filesystem
-storage is billed separately while it exists.
+Verify local counts, then terminate the GPU instance in the Lambda console/API. Closing
+SSH, detaching `tmux`, or shutting down your laptop does not stop GPU billing.
 
 ## Expected storage
 
-Using six parsed steps per root rollout as the current measured planning point:
+Hidden tensors are exact once average parsed step count `S` is known:
 
-- hidden tensors:
-  `16,000 × 6 × 4 layers × 4,096 values × 2 bytes ≈ 3.15 GB`;
-- root JSONL text and metadata: approximately 0.05–0.2 GB;
-- MC JSONL prefixes, continuation text, and labels: approximately 0.1–0.5 GB;
-- split and logs: under 0.1 GB.
+```text
+16,000 rollouts × S steps × 4 layers × 4,096 × 2 bytes
+= 524,288,000 × S bytes
+```
 
-At 4–10 average steps, hidden tensors span roughly 2.1–5.2 GB. Allow **4–7 GB for
-generated artifacts** because step count and text length vary. The
-Hugging Face BF16 model cache is approximately 16.4 GB, bringing the expected persistent
-total to roughly **21–24 GB**. Python packages live on the instance root disk in this guide
-and are not included. A 50 GB persistent filesystem is therefore sufficient with more than
-2× expected headroom.
+The smoke run had 6 steps / 144 tokens = 24 tokens/step. Applying that to the plan's
+204-token MATH mean gives `S≈8.5`:
+
+| Component | Size |
+|---|---:|
+| Hidden `.pt` tensors at `S=8.5` | **4.456 GB** |
+| `.pt` pickle/file overhead | 0.018 GB |
+| Root JSONL | 0.061 GB |
+| MC JSONL | 0.055 GB |
+| Split + logs | 0.004 GB |
+| **Total to copy home** | **≈4.59 GB** |
+
+At `S=6` / `10` / `12`, totals are about **3.28 / 5.38 / 6.43 GB**. Reserve **6 GB** on
+the Mac for the backup. The 16.4 GB model cache stays on Lambda and is not copied.
 
 ## Operational cautions
 
 - Use BF16 on H100; this Lambda pipeline intentionally has no 4-bit path.
 - Do not launch root and MC scripts concurrently on the same GPU.
 - Do not run multiple Python worker processes on one GPU. Use `--batch-size`.
-- Do not terminate the instance until persistent-path counts and logs are checked.
+- Do not terminate the instance until artifacts have been copied home and verified.
 - The H100 still needs a measured pilot. Price estimates made from T4 throughput are not a
   reliable bill forecast.

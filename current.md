@@ -16,7 +16,7 @@ budgets.
 ## Current stage
 
 Phase 0 data instrumentation is implemented and passed a one-problem Colab T4 smoke test.
-The production target is now a persistent Lambda H100 PCIe instance:
+The production target is now a Lambda H100 PCIe instance:
 
 1. Build the deterministic 2,000-train/500-validation MATH split.
 2. Generate 8 root rollouts for every train problem.
@@ -33,7 +33,7 @@ Exact Lambda setup and commands are in `LambdaUsage.md`.
 - Batch size: 8
 - Root corpus: 2,000 × 8 = 16,000 rollouts
 - MC corpus: up to 2,000 × 6 × 8 = 96,000 continuations
-- Persistent output: `$TOKENAWARE_ARTIFACTS`
+- Remote output: `$TOKENAWARE_ARTIFACTS`
 - Default local output: `artifacts/`
 
 Batch 8 is exact for the current protocol: each atomic problem/prefix has `k=8` samples.
@@ -41,8 +41,10 @@ A larger configured batch cannot collect more than eight requests.
 
 ## Artifact layout
 
-Generated files are ignored by `artifacts/.gitignore`. On Lambda, point
-`TOKENAWARE_ARTIFACTS` at the attached persistent filesystem.
+Generated files are ignored by `artifacts/.gitignore`. During the Lambda job, everything
+lives on the instance (`TOKENAWARE_ARTIFACTS`, `HF_HOME`). `scripts/pull_artifacts.py` is
+a Mac-only backup of completed files; it is required once before you terminate the
+instance, optional mid-job. Do not attach a paid Lambda filesystem for this corpus.
 
 ```text
 artifacts/
@@ -72,6 +74,7 @@ MC temporary files resume at prefix-state granularity.
   and hidden-state extraction.
 - `scripts/generate_root_rollouts.py` — batched root generation and hidden-state saving.
 - `scripts/generate_mc_prefix_labels.py` — batched fresh continuations and MC labels.
+- `scripts/pull_artifacts.py` — Mac-only backup of completed Lambda artifacts (not used on the instance).
 
 ### Package
 
@@ -95,4 +98,5 @@ MC temporary files resume at prefix-state granularity.
 
 Run the 25-problem Lambda H100 pilot in `LambdaUsage.md`. Validate numbered files,
 correctness distribution, truncation, output size, and elapsed time. Then rerun the same
-commands without `--limit`; completed files are skipped.
+commands without `--limit`; completed files are skipped. Pull completed artifacts anytime
+with `pull_artifacts.py`. After the full job, pull once more, then terminate the instance.
