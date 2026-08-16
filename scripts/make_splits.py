@@ -6,14 +6,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path.cwd() / "src"))
-try:
-    from tokenaware.paths import ensure_src_on_path
-except ImportError:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-    from tokenaware.paths import ensure_src_on_path
-
-ensure_src_on_path()
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from tokenaware.config import ARTIFACTS_DIR
 from tokenaware.data import load_math_train, save_split, stratified_split

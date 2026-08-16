@@ -40,10 +40,9 @@ def last_token_vectors(
     cache: dict[int, torch.Tensor],
     token_index: int,
     batch: int = 0,
-) -> dict[int, list[float]]:
-    """Read h[batch, token_index] at each hooked layer. CPU float32 lists."""
-    out: dict[int, list[float]] = {}
+) -> dict[int, torch.Tensor]:
+    """Read h[batch, token_index] at each hooked layer as CPU FP16 tensors."""
+    out: dict[int, torch.Tensor] = {}
     for idx, t in cache.items():
-        vec = t[batch, token_index].float().cpu()
-        out[idx] = vec.tolist()
+        out[idx] = t[batch, token_index].to(dtype=torch.float16, device="cpu")
     return out

@@ -4,44 +4,21 @@ import os
 from pathlib import Path
 
 
-def _detect_colab() -> bool:
-    try:
-        import google.colab  # noqa: F401
-
-        return True
-    except ImportError:
-        return False
-
-
-IN_COLAB = _detect_colab()
-
-
 def resolve_repo_root() -> Path:
-    """Repo root: TOKENAWARE_ROOT, then this file's parents, then /content/TokenAwareAI."""
+    """Use TOKENAWARE_ROOT when set, otherwise infer the checkout root."""
     env = os.environ.get("TOKENAWARE_ROOT")
     if env:
         return Path(env).expanduser().resolve()
-    here = Path(__file__).resolve().parents[2]
-    if (here / "src" / "tokenaware").is_dir():
-        return here
-    colab = Path("/content/TokenAwareAI")
-    if (colab / "src" / "tokenaware").is_dir():
-        return colab
-    return here
+    return Path(__file__).resolve().parents[2]
 
 
 def resolve_artifacts_dir(repo_root: Path) -> Path:
-    """Prefer Drive on Colab so rollouts survive runtime disconnects."""
+    """Use persistent TOKENAWARE_ARTIFACTS when set, otherwise repo/artifacts."""
     env = os.environ.get("TOKENAWARE_ARTIFACTS")
     if env:
         p = Path(env).expanduser().resolve()
         p.mkdir(parents=True, exist_ok=True)
         return p
-    if IN_COLAB:
-        drive = Path("/content/drive/MyDrive/TokenAwareAI/artifacts")
-        if Path("/content/drive/MyDrive").is_dir():
-            drive.mkdir(parents=True, exist_ok=True)
-            return drive
     p = repo_root / "artifacts"
     p.mkdir(parents=True, exist_ok=True)
     return p
@@ -51,7 +28,7 @@ REPO_ROOT = resolve_repo_root()
 ARTIFACTS_DIR = resolve_artifacts_dir(REPO_ROOT)
 DATASETS_DIR = REPO_ROOT / "datasets"
 
-# Load from the Hub on Colab. A finished local snapshot is optional.
+# A finished local snapshot is optional; otherwise load from the Hub.
 MODEL_ID = os.environ.get("TOKENAWARE_MODEL", "Qwen/Qwen3-8B")
 MODEL_DIR = Path(os.environ.get("TOKENAWARE_MODEL_DIR", REPO_ROOT / "models" / "Qwen3-8B"))
 MATH_DATASET_ID = "EleutherAI/hendrycks_math"

@@ -7,14 +7,7 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path.cwd() / "src"))
-try:
-    from tokenaware.paths import ensure_src_on_path
-except ImportError:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-    from tokenaware.paths import ensure_src_on_path
-
-ensure_src_on_path()
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from tokenaware.config import ARTIFACTS_DIR, PROBE_LAYER_INDICES
 from tokenaware.data import load_split
@@ -27,7 +20,6 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--model", default=None, help="HF id or local dir. Default: Hub Qwen/Qwen3-8B")
     p.add_argument("--dtype", default="auto", choices=("auto", "float16", "bfloat16"))
-    p.add_argument("--load-in-4bit", action="store_true", help="T4-friendly. Needs bitsandbytes.")
     args = p.parse_args()
 
     split_path = ARTIFACTS_DIR / "splits" / "math_probe_split.json"
@@ -37,9 +29,7 @@ def main() -> None:
     print(f"problem_id={problem['problem_id']} level={problem['level']} {problem['subject']}")
     print(problem["problem"][:200], "...")
 
-    model, tokenizer = load_model(
-        model_id=args.model, dtype=args.dtype, load_in_4bit=args.load_in_4bit
-    )
+    model, tokenizer = load_model(model_id=args.model, dtype=args.dtype)
     rollout = generate_rollout(
         model,
         tokenizer,

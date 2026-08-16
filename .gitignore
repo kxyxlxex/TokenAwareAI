@@ -6,9 +6,7 @@ models/*
 datasets/*
 !datasets/.gitkeep
 
-# Generated rollouts, hidden-state caches, probe checkpoints during dev
-artifacts/*
-!artifacts/.gitkeep
+# Generated outputs are governed by artifacts/.gitignore.
 *.safetensors
 *.bin
 *.pt

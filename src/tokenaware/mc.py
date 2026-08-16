@@ -18,7 +18,7 @@ def select_prefix_states(
     fractions: tuple[float, ...] = PREFIX_FRACTIONS,
 ) -> list[dict]:
     """Select nearest unique step boundaries at 25/50/75% on two traces."""
-    usable = [r for r in rollouts if r.get("steps")]
+    usable = [r for r in rollouts if r.get("steps") and r.get("gen_ids")]
     selected: list[dict] = []
     for trace in usable[:traces_per_problem]:
         steps = trace["steps"]
@@ -29,6 +29,9 @@ def select_prefix_states(
                 continue
             used.add(step_index)
             step = steps[step_index]
+            token_end = step.get("last_token_offset")
+            if token_end is None:
+                continue
             selected.append(
                 {
                     "source_sample_id": trace["sample_id"],
@@ -36,6 +39,7 @@ def select_prefix_states(
                     "step_index": step_index,
                     "prefix_char_end": step["char_end"],
                     "prefix": trace["text"][: step["char_end"]],
+                    "prefix_token_ids": trace["gen_ids"][: token_end + 1],
                     "source_trace_correct": trace["correct"],
                     "source_tokens_remaining": step["tokens_remaining_this_trace"],
                 }

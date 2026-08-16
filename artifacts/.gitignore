@@ -1,0 +1,3 @@
+# Keep every generated artifact local or on the configured persistent volume.
+*
+!.gitignore

@@ -77,26 +77,27 @@ def attach_token_offsets(
 ) -> list[Step]:
     """Map each step's last character to a generated-token offset.
 
-    Uses incremental decode of generated_ids so offsets stay aligned with
-    the model's actual tokenization rather than re-encoding the string.
+    Binary-searches decoded prefixes of the actual generated IDs, avoiding
+    re-tokenization and the previous quadratic full-prefix scan.
     """
     if not generated_ids:
         return steps
-    prefix_lens: list[int] = []
-    acc = ""
-    for i, tid in enumerate(generated_ids):
-        acc = tokenizer.decode(generated_ids[: i + 1], skip_special_tokens=True)
-        prefix_lens.append(len(acc))
-
     for step in steps:
         target = step.char_end
-        # First prefix whose decoded length covers the end of this step line.
-        idx = None
-        for i, L in enumerate(prefix_lens):
-            if L >= target:
-                idx = i
-                break
-        if idx is None:
-            idx = len(generated_ids) - 1
-        step.last_token_offset = idx
+        low, high = 0, len(generated_ids) - 1
+        if len(tokenizer.decode(generated_ids, skip_special_tokens=True)) < target:
+            step.last_token_offset = None
+            continue
+        while low < high:
+            mid = (low + high) // 2
+            decoded_len = len(
+                tokenizer.decode(
+                    generated_ids[: mid + 1], skip_special_tokens=True
+                )
+            )
+            if decoded_len >= target:
+                high = mid
+            else:
+                low = mid + 1
+        step.last_token_offset = low
     return steps
