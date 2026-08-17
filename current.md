@@ -1,6 +1,6 @@
 # Current state — TokenAwareAI
 
-Last updated 16 Aug 2026.
+Last updated 17 Aug 2026.
 
 ## Goal
 
@@ -16,7 +16,7 @@ budgets.
 ## Current stage
 
 Phase 0 data instrumentation is implemented and passed a one-problem Colab T4 smoke test.
-The production target is now a Lambda H100 PCIe instance:
+The production target is now a Lambda A100 80 GB instance:
 
 1. Build the deterministic 2,000-train/500-validation MATH split.
 2. Generate 8 root rollouts for every train problem.
@@ -29,15 +29,17 @@ Exact Lambda setup and commands are in `LambdaUsage.md`.
 ## Production configuration
 
 - Model: `Qwen/Qwen3-8B`, non-thinking mode
-- Precision: BF16 on H100
-- Batch size: 8
+- Precision: BF16 on A100
+- Batch size: 8 (effective max with current per-problem/prefix atomic scripts)
 - Root corpus: 2,000 × 8 = 16,000 rollouts
 - MC corpus: up to 2,000 × 6 × 8 = 96,000 continuations
 - Remote output: `$TOKENAWARE_ARTIFACTS`
 - Default local output: `artifacts/`
 
-Batch 8 is exact for the current protocol: each atomic problem/prefix has `k=8` samples.
-A larger configured batch cannot collect more than eight requests.
+Batch 8 is exact for the current protocol: each atomic problem/prefix has `k=8` samples,
+and the scripts only batch those eight homogeneous requests. A larger `--batch-size` cannot
+collect more than eight requests without a packing change. An A100 80 GB is not the
+constraint: Qwen3-8B BF16 KV is 147,456 bytes/token, so batch 8 at 1024 tokens is ~1.1 GiB.
 
 ## Artifact layout
 
@@ -96,7 +98,7 @@ MC temporary files resume at prefix-state granularity.
 
 ## Next action
 
-Run the 25-problem Lambda H100 pilot in `LambdaUsage.md`. Validate numbered files,
+Run the 25-problem Lambda A100 pilot in `LambdaUsage.md`. Validate numbered files,
 correctness distribution, truncation, output size, and elapsed time. Then rerun the same
 commands without `--limit`; completed files are skipped. Pull completed artifacts anytime
 with `pull_artifacts.py`. After the full job, pull once more, then terminate the instance.

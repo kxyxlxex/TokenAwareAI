@@ -1,6 +1,6 @@
 # Lambda Cloud usage — full V/T corpus
 
-Last updated 16 Aug 2026.
+Last updated 17 Aug 2026.
 
 This run happens entirely on a remote Lambda instance. Code, model weights, MATH split,
 rollouts, MC labels, and logs all live on that machine. Your laptop may disconnect, sleep,
@@ -22,28 +22,42 @@ Generation scripts never write to your Mac. They only use `$TOKENAWARE_ARTIFACTS
 
 ## Recommended machine
 
-Use one **H100 PCIe 80 GB** instance when available. It is the practical time/cost choice
-for Qwen3-8B generation:
+Use one **A100 80 GB** instance. It runs Qwen3-8B generation comfortably:
 
-- run Qwen3-8B in BF16; do not use 4-bit on H100;
-- use batch 8 for both jobs;
+- run Qwen3-8B in BF16; do not use 4-bit on A100;
+- use batch 8 for both jobs with the current scripts;
 - use one GPU and one process—no distributed setup is required.
 
-Batch 8 is not a guess: the protocol requests exactly `k=8` root samples per problem and
-exactly `k=8` continuations per prefix. The scripts keep problem/prefix outputs atomic, so
-there are only eight homogeneous requests available at once. A larger `--batch-size` cannot
-increase the actual batch. Combining unrelated problems would add prompt-padding waste and
-make recovery less granular. Qwen3-8B's BF16 weights are about 16.4 GB; its BF16 KV cache is
-147,456 bytes per sequence token, so eight sequences at the conservative ~2K-token
-prompt-plus-output bound use about 2.25 GiB of KV cache—well within an 80 GB H100.
+Batch 8 is not a guess, and it is not a memory limit either. The protocol requests exactly
+`k=8` root samples per problem and exactly `k=8` continuations per prefix, and the scripts
+batch only those eight homogeneous requests at a time so each problem/prefix output stays
+atomic. A larger `--batch-size` therefore cannot increase the true batch today; it would
+require a cross-problem/prefix packing change (see below).
 
-Lambda's public price on 16 Aug 2026 is $3.29/GPU-hour for H100 PCIe. Pricing and
-availability change, so verify [Lambda pricing](https://lambda.ai/pricing) before launch.
-Billing is by the minute while the instance is running, including idle time.
+The A100 has ample headroom, so memory is not the constraint. Qwen3-8B's BF16 weights are
+about 16.4 GB. Its BF16 KV cache is exactly
+
+    2 (K+V) × 36 layers × 8 KV heads × 128 head-dim × 2 bytes = 147,456 bytes per token,
+
+so eight sequences at the ~1K-token hard cap use only about 1.1 GiB of KV cache, and even
+the conservative ~2K-token bound is about 2.25 GiB—negligible against 80 GB. With ~8 GB
+reserved for activations/CUDA, the KV budget alone would fit **hundreds** of concurrent
+sequences (≈360 at 1024 tokens). The cap on effective batch is the atomic-per-problem
+loop, not the A100.
+
+If you later add cross-problem/prefix packing (a global request queue that fans results
+back into per-problem/per-state writers), prefer batch sizes that are multiples of 8 so
+each call is an integer number of `k=8` groups and recovery stays "N complete units." Good
+starting points to re-measure on the pilot are **root 32** and **MC 64**, which push
+single-GPU decode toward A100 saturation while staying far under the memory ceiling.
+
+Lambda's on-demand 1×A100 80 GB price is about $1.79/GPU-hour. Pricing and availability
+change, so verify [Lambda pricing](https://lambda.ai/pricing) before launch. Billing is by
+the minute while the instance is running, including idle time.
 
 ## 1. Storage choice
 
-Use the H100 PCIe instance's included **1 TB root volume**. Expected generated corpus is
+Use the A100 instance's included **1 TB root volume**. Expected generated corpus is
 about **4.59 GB** (reserve 6 GB). This avoids separate filesystem charges.
 
 Everything for this phase stays on that volume. Your laptop is offline-safe during
@@ -184,9 +198,11 @@ Check utilization from a second SSH session:
 watch -n 2 nvidia-smi
 ```
 
-Use batch 8. A larger value has no effect while `k=8`; a smaller value leaves avoidable
-parallelism unused. The pilot is for validating correctness and projecting elapsed time,
-not searching batch sizes.
+Use `--batch-size 8`. A larger value has no effect while each call is capped at the `k=8`
+homogeneous samples of one problem/prefix; a smaller value leaves avoidable parallelism
+unused. The pilot is for validating correctness and projecting elapsed time. Only revisit
+batch size if you first add cross-problem/prefix packing, in which case pilot root 32 and
+MC 64 (multiples of 8) on the A100.
 
 ## 5. Run the full training corpus
 
@@ -344,9 +360,9 @@ the Mac for the backup. The 16.4 GB model cache stays on Lambda and is not copie
 
 ## Operational cautions
 
-- Use BF16 on H100; this Lambda pipeline intentionally has no 4-bit path.
+- Use BF16 on A100; this Lambda pipeline intentionally has no 4-bit path.
 - Do not launch root and MC scripts concurrently on the same GPU.
 - Do not run multiple Python worker processes on one GPU. Use `--batch-size`.
 - Do not terminate the instance until artifacts have been copied home and verified.
-- The H100 still needs a measured pilot. Price estimates made from T4 throughput are not a
+- The A100 still needs a measured pilot. Price estimates made from T4 throughput are not a
   reliable bill forecast.

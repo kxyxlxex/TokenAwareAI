@@ -82,10 +82,11 @@ def attach_token_offsets(
     """
     if not generated_ids:
         return steps
+    generated_len = len(generated)
     for step in steps:
         target = step.char_end
         low, high = 0, len(generated_ids) - 1
-        if len(tokenizer.decode(generated_ids, skip_special_tokens=True)) < target:
+        if generated_len < target:
             step.last_token_offset = None
             continue
         while low < high:

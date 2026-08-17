@@ -62,6 +62,7 @@ def load_model(
     model_kwargs: dict = {
         "device_map": device_map,
         "local_files_only": local_only,
+        "attn_implementation": "sdpa",
     }
     if dtype == "float16":
         model_kwargs["torch_dtype"] = torch.float16
@@ -72,6 +73,8 @@ def load_model(
 
     model = AutoModelForCausalLM.from_pretrained(source, **model_kwargs)
     model.eval()
+    attn = getattr(model.config, "_attn_implementation", None)
+    print(f"attn_implementation={attn}")
     return model, tokenizer
 
 
@@ -198,6 +201,9 @@ def _capture_batch_hidden(
 
     with hidden_state_hooks(model, PROBE_LAYER_INDICES) as cache:
         model(input_ids, attention_mask=attention_mask, use_cache=False)
+        cpu_cache = {
+            idx: t.to(dtype=torch.float16, device="cpu") for idx, t in cache.items()
+        }
 
     for batch_index, (rollout, prompt) in enumerate(zip(rollouts, prompt_ids)):
         layer_vectors: dict[str, list[torch.Tensor]] = {
@@ -209,7 +215,7 @@ def _capture_batch_hidden(
                 continue
             absolute_index = prompt.shape[1] + offset
             for layer_index, vector in last_token_vectors(
-                cache, absolute_index, batch=batch_index
+                cpu_cache, absolute_index, batch=batch_index
             ).items():
                 layer_vectors[str(layer_index)].append(vector)
         rollout.hidden = {
