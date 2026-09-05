@@ -296,6 +296,48 @@ Check in this order before believing it.
 Then pivot per plan Step 5: feasibility gating (`feasibility_only` is already a
 reported selector), or the probe-cost accounting paper.
 
+### Per-level reports
+
+Pooled numbers are dominated by level 1–2 states where nearly every
+continuation is correct and short. `evaluate_probes.py --levels 4 5` restricts
+every metric to those levels and writes `<tag>_L45.json` / `summary_L45.json`
+next to the pooled report.
+
+---
+
+## 4b. Search (plan Step 6), only after the verdict is not KILL
+
+`scripts/run_search.py` is the online experiment: step-level tree search on
+MATH-500 under an output-token budget, with node selection by the trained
+probe. Arms: `single_chain`, `majority_vote`, `random`, `v_only`, `vt`
+(`Score = V · P(T ≤ B_rem)`), `bang_per_buck`, `feasibility_gate`, `shortest`.
+Every generated token is charged, including discarded siblings, so tree arms
+differ only in which sibling they keep. Searches for all problems advance in
+lockstep so each model call is one large batch.
+
+```bash
+# smoke: 20 problems, one budget
+python scripts/run_search.py --probe $TOKENAWARE_ARTIFACTS/sweeps/phase0/<tag>/probe.pt \
+    --arms v_only vt --budgets 256 --seeds 0 --limit 20 --dtype bfloat16
+
+# paper grid; resumable, one JSONL per (arm, budget, seed) under artifacts/search/math500
+python scripts/run_search.py --probe .../probe.pt \
+    --arms single_chain majority_vote random v_only vt bang_per_buck feasibility_gate \
+    --budgets 256 512 1024 --seeds 0 1 2 --dtype bfloat16
+
+# negative control: no gain expected
+python scripts/run_search.py --dataset gsm8k --probe .../probe.pt \
+    --arms v_only vt --budgets 256 512 --seeds 0
+
+python scripts/run_search.py --summary-only        # rebuild summary.json + table
+```
+
+Headline: accuracy vs `tokens_mean` per arm, `v_only` against `vt`, per level.
+`summary.json` carries both, plus `accuracy_within_budget` and over-budget rate.
+Selection is stochastic (`p ∝ Score^α`, `α = B_0 / B_rem` capped at 8); below
+`--eta 0.2` of the budget the search stops branching and commits. `--greedy`
+is the deterministic ablation.
+
 ---
 
 ## 5. File map
@@ -312,6 +354,8 @@ reported selector), or the probe-cost accounting paper.
 | `scripts/sweep_probes.py` | layer × architecture × control grid |
 | `scripts/evaluate_probes.py` | full metric suite + verdict |
 | `scripts/generate_sibling_branches.py` | true sibling states + MC labels |
+| `scripts/run_search.py` | budgeted search on MATH-500 / GSM8K, all arms, resumable |
+| `src/tokenaware/search.py` | online probe, policies, lockstep search + chain baselines |
 | `src/tokenaware/hfio.py` | Hub transfer, safe archive extraction |
 | `src/tokenaware/probes/cache.py` | cache schema, memmap writer/reader |
 | `src/tokenaware/probes/features.py` | causal features, outcome-draw tables |
@@ -320,7 +364,8 @@ reported selector), or the probe-cost accounting paper.
 | `src/tokenaware/probes/metrics.py` | global, sibling, budget-utility, verdict |
 | `src/tokenaware/probes/train.py` | two-stage training loop, save/load |
 | `src/tokenaware/probes/evaluate.py` | prediction, baselines, report assembly |
-| `tests/test_probes.py` | 32 tests; numpy-only ones run without torch |
+| `tests/test_probes.py` | probe cache, features, losses, metrics |
+| `tests/test_search.py` | search state machine, policies, baselines on a stub generator |
 
 ### Cache layout
 

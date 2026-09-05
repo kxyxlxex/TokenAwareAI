@@ -165,3 +165,95 @@ def save_split(split: dict, path: Path) -> None:
 
 def load_split(path: Path) -> dict:
     return json.loads(path.read_text())
+
+
+# --------------------------------------------------------------------------- #
+# search evaluation sets (never used for probe training)
+# --------------------------------------------------------------------------- #
+MATH500_DATASET_ID = "HuggingFaceH4/MATH-500"
+GSM8K_DATASET_ID = "openai/gsm8k"
+
+_SUBJECT_ALIASES = {
+    "algebra": "algebra",
+    "counting & probability": "counting_and_probability",
+    "counting and probability": "counting_and_probability",
+    "geometry": "geometry",
+    "intermediate algebra": "intermediate_algebra",
+    "number theory": "number_theory",
+    "prealgebra": "prealgebra",
+    "precalculus": "precalculus",
+}
+
+
+def _normalize_subject(name: str) -> str:
+    key = str(name).strip().lower()
+    return _SUBJECT_ALIASES.get(key, key.replace(" ", "_"))
+
+
+def load_math500(local_dir: Path | None = None) -> list[dict]:
+    """MATH-500 (Lightman et al. uniform subset of MATH test), cached as JSON.
+
+    Disjoint from MATH train, hence from every probe training problem.
+    """
+    root = local_dir or DATASETS_DIR
+    cache = root / "math500.json"
+    if cache.is_file():
+        return json.loads(cache.read_text())
+
+    from datasets import load_dataset
+
+    ds = load_dataset(MATH500_DATASET_ID, split="test")
+    rows = []
+    for ex in ds:
+        level = ex.get("level")
+        try:
+            level = int(str(level).replace("Level", "").strip())
+        except (TypeError, ValueError):
+            level = 0
+        rows.append(
+            {
+                "problem_id": f"math500:{ex.get('unique_id') or _problem_id('math500', ex['problem'])}",
+                "subject": _normalize_subject(ex.get("subject", "")),
+                "level": level,
+                "problem": ex["problem"],
+                "gold": str(ex["answer"]).strip(),
+            }
+        )
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_text(json.dumps(rows, indent=1))
+    return rows
+
+
+def load_gsm8k_test(local_dir: Path | None = None) -> list[dict]:
+    """GSM8K test (1,319). Negative control: V+T should not help here."""
+    root = local_dir or DATASETS_DIR
+    cache = root / "gsm8k_test.json"
+    if cache.is_file():
+        return json.loads(cache.read_text())
+
+    from datasets import load_dataset
+
+    ds = load_dataset(GSM8K_DATASET_ID, "main", split="test")
+    rows = []
+    for i, ex in enumerate(ds):
+        gold = str(ex["answer"]).split("####")[-1].strip().replace(",", "")
+        rows.append(
+            {
+                "problem_id": f"gsm8k:{i:04d}",
+                "subject": "gsm8k",
+                "level": 0,
+                "problem": ex["question"],
+                "gold": gold,
+            }
+        )
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_text(json.dumps(rows, indent=1))
+    return rows
+
+
+def load_eval_set(name: str) -> list[dict]:
+    if name == "math500":
+        return load_math500()
+    if name == "gsm8k":
+        return load_gsm8k_test()
+    raise ValueError(f"unknown eval set {name!r}")

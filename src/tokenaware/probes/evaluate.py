@@ -230,10 +230,20 @@ def evaluate_report(
     split: int = SPLIT_VAL,
     budgets: tuple[int, ...] = DEFAULT_BUDGETS,
     seed: int = 0,
+    levels: tuple[int, ...] | None = None,
 ) -> dict:
+    """Full metric suite on the MC-labelled states of ``split``.
+
+    ``levels`` restricts evaluation to the given MATH difficulty levels. Pooled
+    numbers are dominated by level 1-2 states where nearly every continuation is
+    correct and short; the budget only binds at levels 4-5, so per-level reports
+    are what the plan asks to headline.
+    """
     eval_states = build_eval_states(cache, split)
+    if levels:
+        eval_states = eval_states.subset(np.isin(eval_states.level, list(levels)))
     if len(eval_states) == 0:
-        return {"error": "no Monte-Carlo-labelled states in this split"}
+        return {"error": "no Monte-Carlo-labelled states in this split/levels"}
 
     pred = predict_states(probe, store, eval_states.rows)
     v_pred = (
@@ -260,6 +270,11 @@ def evaluate_report(
 
     report: dict = {
         "split": "val" if split == SPLIT_VAL else "train",
+        "levels": list(levels) if levels else None,
+        "level_counts": {
+            str(k): int(v)
+            for k, v in zip(*np.unique(eval_states.level, return_counts=True))
+        },
         "config": cfg.to_dict(),
         "probe_params_m": round(probe.n_params / 1e6, 3),
         "n_eval_states": len(eval_states),

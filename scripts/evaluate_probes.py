@@ -90,11 +90,20 @@ def main() -> int:
     p.add_argument("--probe-dir", default=None)
     p.add_argument("--split", choices=("train", "val"), default="val")
     p.add_argument("--budgets", type=int, nargs="+", default=list(DEFAULT_BUDGETS))
+    p.add_argument(
+        "--levels",
+        type=int,
+        nargs="+",
+        default=None,
+        help="restrict evaluation to these MATH levels, e.g. --levels 4 5",
+    )
     p.add_argument("--device", default="cuda")
     p.add_argument("--out", default=None, help="directory for report JSON files")
     p.add_argument("--no-preload", dest="preload", action="store_false")
     p.set_defaults(preload=True)
     args = p.parse_args()
+    levels = tuple(sorted(set(args.levels))) if args.levels else None
+    suffix = f"_L{''.join(str(x) for x in levels)}" if levels else ""
 
     paths = [Path(x) for x in (args.probe or [])]
     if args.probe_dir:
@@ -123,16 +132,24 @@ def main() -> int:
             split=split,
             budgets=tuple(args.budgets),
             seed=cfg.seed,
+            levels=levels,
         )
+        if "error" in report:
+            print(report["error"])
+            del probe, store
+            continue
+        if levels:
+            print(f"levels={list(levels)} counts={report.get('level_counts')}")
         print(summarize(report))
-        target = (out_dir / f"{path.parent.name}.json") if out_dir else (
-            path.parent / f"report_{args.split}.json"
+        target = (out_dir / f"{path.parent.name}{suffix}.json") if out_dir else (
+            path.parent / f"report_{args.split}{suffix}.json"
         )
         target.write_text(json.dumps(report, indent=2, default=str))
         summary.append(
             {
                 "probe": str(path),
                 "tag": cfg.tag(),
+                "levels": list(levels) if levels else None,
                 "decision": report.get("verdict", {}).get("decision"),
                 "sibling_t_pairwise": report.get("sibling", {})
                 .get("primary", {})
@@ -144,7 +161,7 @@ def main() -> int:
         del probe, store
 
     if out_dir:
-        (out_dir / "summary.json").write_text(
+        (out_dir / f"summary{suffix}.json").write_text(
             json.dumps(summary, indent=2, default=str)
         )
     print("\n=== summary ===")

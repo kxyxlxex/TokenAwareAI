@@ -352,6 +352,27 @@ class EvalStates:
     def __len__(self) -> int:
         return int(self.rows.shape[0])
 
+    def subset(self, mask: np.ndarray) -> "EvalStates":
+        """Row subset; every per-state array is indexed by the same mask."""
+        mask = np.asarray(mask, dtype=bool)
+        return EvalStates(
+            rows=self.rows[mask],
+            problem_idx=self.problem_idx[mask],
+            group_id=self.group_id[mask],
+            fraction=self.fraction[mask],
+            source=self.source[mask],
+            step_index=self.step_index[mask],
+            tokens_so_far=self.tokens_so_far[mask],
+            level=self.level[mask],
+            v_mc=self.v_mc[mask],
+            t_mc_mean=self.t_mc_mean[mask],
+            draw_len=self.draw_len[mask],
+            draw_correct=self.draw_correct[mask],
+            draw_valid=self.draw_valid[mask],
+            mc_k=self.mc_k[mask],
+            extra=dict(self.extra),
+        )
+
 
 def build_eval_states(cache: ProbeCache, split: int) -> EvalStates:
     mc_rows = cache.mc_rows_for_split(split)
