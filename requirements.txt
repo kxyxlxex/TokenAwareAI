@@ -1,11 +1,20 @@
 # Requires Python >=3.10 for Qwen3/transformers and math-verify.
 # macOS system Python is often 3.9 — use: brew install python@3.12 && python3.12 -m venv .venv
+#
+# On a CUDA box install torch first from the CUDA index, then this file:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu124
+#   pip install -r requirements.txt
 torch>=2.4.0
 transformers>=4.51.0
 accelerate>=0.34.0
 huggingface_hub>=0.26.0
+hf_transfer>=0.1.6
 datasets>=3.0.0
 safetensors>=0.4.0
 numpy>=1.26.0
+pandas>=2.0.0
+pyarrow>=15.0.0
+scipy>=1.11.0
 scikit-learn>=1.4.0
 math-verify>=0.1.0
+pytest>=8.0.0

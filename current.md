@@ -96,9 +96,47 @@ MC temporary files resume at prefix-state granularity.
 - `idea-cost-aware-tree-search.md` — research framing.
 - `budget-aware-ai-literature.md` — supporting literature.
 
+## Probe training (Phase 0 decision)
+
+Implemented and tested. The corpus now lives in a private Hugging Face dataset repo
+(`kxyxlxex/tokenaware-artifacts`) as archives, and training runs on a rented GPU that
+fetches from the Hub; nothing large is kept locally. Full plan, rationale, and command
+sequence: `RemoteTraining.md`.
+
+### Execution
+
+- `remote/bootstrap.sh` — provision a CUDA box and write `env.sh`.
+- `remote/run_phase0.sh` — fetch, inventory, branches, cache, sweep, evaluate, push.
+- `scripts/fetch_artifacts_hf.py` / `scripts/push_artifacts_hf.py` — Hub transfer.
+- `scripts/inventory_artifacts.py` — corpus audit and warnings.
+- `scripts/build_probe_cache.py` — join root `.jsonl`+`.pt`, MC labels, sibling branches.
+- `scripts/train_probe.py`, `scripts/sweep_probes.py`, `scripts/evaluate_probes.py`.
+- `scripts/generate_sibling_branches.py` — true sibling states (shared parent prefix).
+
+### Package
+
+- `src/tokenaware/hfio.py` — Hub transfer and safe archive extraction.
+- `src/tokenaware/probes/cache.py` — memmap cache schema, writer, reader.
+- `src/tokenaware/probes/features.py` — causal features and outcome-draw tables.
+- `src/tokenaware/probes/heads.py` — trunks plus V and T heads.
+- `src/tokenaware/probes/losses.py` — BCE, censored discretised NLL, pinball, L1.
+- `src/tokenaware/probes/metrics.py` — global, sibling, budget-utility, kill verdict.
+- `src/tokenaware/probes/train.py` — two-stage training loop.
+- `src/tokenaware/probes/evaluate.py` — prediction, baselines, report assembly.
+
 ## Next action
 
-Run the 25-problem Lambda A100 pilot in `LambdaUsage.md`. Validate numbered files,
-correctness distribution, truncation, output size, and elapsed time. Then rerun the same
-commands without `--limit`; completed files are skipped. Pull completed artifacts anytime
-with `pull_artifacts.py`. After the full job, pull once more, then terminate the instance.
+Fetch the Hub corpus onto a GPU box and run `scripts/inventory_artifacts.py --deep`
+first. The audit decides what else needs generating before the go/no-go is meaningful:
+
+1. Confirm all five difficulty levels are present. The split list is level-ordered, so a
+   prefix of the corpus is levels 1–3 only, and Level 4–5 is where allocation should
+   matter.
+2. Confirm MC coverage across the 2,000 train problems.
+3. Generate sibling branches (~500 problems) so the sibling metric uses real siblings
+   instead of the two-trace proxy.
+4. Optionally add val MC labels at `k=32` to halve the V label noise.
+
+Then sweep layers {9,18,27,36} and read the verdict. Known risk from the local audit:
+81% trace correctness and 74% of MC states with `v_mc ∈ {0,1}` leave little headroom
+above the V-only arm, so report per level and headline the tight-budget, Level 4–5 cells.

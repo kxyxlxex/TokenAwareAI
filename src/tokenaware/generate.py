@@ -349,6 +349,118 @@ def generate_continuations_batch(
     return results
 
 
+def _prompt_plus_prefix_ids(tokenizer, request: dict, eos_ids: set[int]) -> list[int]:
+    prompt_ids = tokenizer(build_prompt(tokenizer, request["problem"]))["input_ids"]
+    prefix_ids = list(request.get("prefix_token_ids") or [])
+    if not prefix_ids and request.get("prefix"):
+        prefix_ids = tokenizer(request["prefix"], add_special_tokens=False)["input_ids"]
+    if prefix_ids and prefix_ids[-1] in eos_ids:
+        prefix_ids = prefix_ids[:-1]
+    return prompt_ids + prefix_ids
+
+
+@torch.inference_mode()
+def generate_continuation_ids_batch(
+    model,
+    tokenizer,
+    requests: list[dict],
+    max_new_tokens: int = MAX_NEW_TOKENS,
+) -> list[dict]:
+    """Continue each prefix and return the raw generated token ids.
+
+    ``generate_continuations_batch`` returns scored text only. Sibling-branch
+    generation needs the ids so a continuation can be cut at its first step
+    boundary in token space and spliced onto the parent prefix exactly.
+    """
+    if not requests:
+        return []
+    _prepare_tokenizer_for_batch(tokenizer)
+    eos_ids = _eos_ids(tokenizer)
+    sequences = [
+        _prompt_plus_prefix_ids(tokenizer, request, eos_ids) for request in requests
+    ]
+    inputs = tokenizer.pad(
+        {
+            "input_ids": sequences,
+            "attention_mask": [[1] * len(sequence) for sequence in sequences],
+        },
+        padding=True,
+        return_tensors="pt",
+    )
+    device = next(model.parameters()).device
+    inputs = {key: value.to(device) for key, value in inputs.items()}
+    input_width = inputs["input_ids"].shape[1]
+
+    generated = model.generate(
+        **inputs,
+        do_sample=True,
+        temperature=TEMPERATURE,
+        top_k=TOP_K,
+        top_p=TOP_P,
+        max_new_tokens=max_new_tokens,
+        pad_token_id=tokenizer.pad_token_id,
+        eos_token_id=tokenizer.eos_token_id,
+    )
+    results = []
+    for batch_index in range(len(requests)):
+        raw_ids = generated[batch_index, input_width:].tolist()
+        gen_ids = _trim_generated_ids(raw_ids, tokenizer)
+        results.append(
+            {
+                "gen_ids": gen_ids,
+                "text": tokenizer.decode(gen_ids, skip_special_tokens=True),
+                "n_tokens": len(gen_ids),
+                "truncated": not _finished_generation(
+                    gen_ids, max_new_tokens, tokenizer.eos_token_id
+                ),
+            }
+        )
+    return results
+
+
+@torch.inference_mode()
+def capture_state_vectors(
+    model,
+    tokenizer,
+    requests: list[dict],
+) -> list[dict[str, torch.Tensor]]:
+    """Hidden vectors at the final token of each ``prompt + prefix`` sequence.
+
+    Used for states that were not produced by a root rollout (sibling branches),
+    where no step-boundary tensor exists in the root ``.pt`` sidecar.
+    """
+    if not requests:
+        return []
+    _prepare_tokenizer_for_batch(tokenizer)
+    eos_ids = _eos_ids(tokenizer)
+    sequences = [
+        _prompt_plus_prefix_ids(tokenizer, request, eos_ids) for request in requests
+    ]
+    device = next(model.parameters()).device
+    max_length = max(len(s) for s in sequences)
+    pad_id = tokenizer.pad_token_id
+    input_ids = torch.full((len(sequences), max_length), pad_id, dtype=torch.long)
+    attention_mask = torch.zeros_like(input_ids)
+    for i, sequence in enumerate(sequences):
+        input_ids[i, : len(sequence)] = torch.tensor(sequence, dtype=torch.long)
+        attention_mask[i, : len(sequence)] = 1
+    input_ids = input_ids.to(device)
+    attention_mask = attention_mask.to(device)
+
+    with hidden_state_hooks(model, PROBE_LAYER_INDICES) as cache:
+        model(input_ids, attention_mask=attention_mask, use_cache=False)
+        cpu_cache = {
+            idx: t.to(dtype=torch.float16, device="cpu") for idx, t in cache.items()
+        }
+    out = []
+    for i, sequence in enumerate(sequences):
+        vectors = last_token_vectors(cpu_cache, len(sequence) - 1, batch=i)
+        out.append(
+            {str(layer): vector.reshape(1, -1) for layer, vector in vectors.items()}
+        )
+    return out
+
+
 @torch.inference_mode()
 def generate_rollout(
     model,
