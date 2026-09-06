@@ -172,7 +172,6 @@ def load_split(path: Path) -> dict:
 # --------------------------------------------------------------------------- #
 MATH500_DATASET_ID = "HuggingFaceH4/MATH-500"
 GSM8K_DATASET_ID = "openai/gsm8k"
-AIME24_DATASET_ID = "HuggingFaceH4/aime_2024"
 
 _SUBJECT_ALIASES = {
     "algebra": "algebra",
@@ -252,38 +251,70 @@ def load_gsm8k_test(local_dir: Path | None = None) -> list[dict]:
     return rows
 
 
-def load_eval_set(name: str) -> list[dict]:
-    if name == "math500":
-        return load_math500()
-    if name == "gsm8k":
-        return load_gsm8k_test()
-    if name in ("aime24", "aime"):
-        return load_aime24()
-    raise ValueError(f"unknown eval set {name!r}")
+AIME2024_DATASET_ID = "HuggingFaceH4/aime_2024"
+AIME2025_DATASET_ID = "math-ai/aime25"
 
 
-def load_aime24(local_dir: Path | None = None) -> list[dict]:
-    """AIME 2024 (30 problems). Long-CoT length probe, not a headline n=30 paper eval."""
+def _aime_row(problem: str, answer, problem_id: str) -> dict:
+    gold = str(answer).strip().replace(",", "")
+    return {
+        "problem_id": problem_id,
+        "subject": "aime",
+        "level": 0,
+        "problem": problem,
+        "gold": gold,
+    }
+
+
+def load_aime(year: int = 2024, local_dir: Path | None = None) -> list[dict]:
+    """AIME I+II for one year (30 problems). Tiny; safe to cache as JSON.
+
+    2024: ``HuggingFaceH4/aime_2024`` (community standard for LLM evals).
+    2025: ``math-ai/aime25``.
+    """
     root = local_dir or DATASETS_DIR
-    cache = root / "aime24.json"
+    cache = root / f"aime{year}.json"
     if cache.is_file():
         return json.loads(cache.read_text())
 
     from datasets import load_dataset
 
-    ds = load_dataset(AIME24_DATASET_ID, split="train")
-    rows = []
-    for i, ex in enumerate(ds):
-        gold = str(ex.get("answer", "")).strip()
-        rows.append(
-            {
-                "problem_id": f"aime24:{i:02d}",
-                "subject": "aime",
-                "level": 5,
-                "problem": ex["problem"],
-                "gold": gold,
-            }
-        )
+    rows: list[dict] = []
+    if year == 2024:
+        ds = load_dataset(AIME2024_DATASET_ID, split="train")
+        for ex in ds:
+            pid = f"aime2024:{ex.get('id', len(rows))}"
+            rows.append(_aime_row(ex["problem"], ex["answer"], pid))
+    elif year == 2025:
+        ds = None
+        for split in ("train", "test", "default"):
+            try:
+                ds = load_dataset(AIME2025_DATASET_ID, split=split)
+                break
+            except Exception:
+                continue
+        if ds is None:
+            ds = load_dataset(AIME2025_DATASET_ID)
+            ds = ds[next(iter(ds))]
+        for i, ex in enumerate(ds):
+            problem = ex.get("problem") or ex.get("question")
+            answer = ex.get("answer")
+            rows.append(_aime_row(problem, answer, f"aime2025:{i+1:02d}"))
+    else:
+        raise ValueError(f"unsupported AIME year {year}")
+
     cache.parent.mkdir(parents=True, exist_ok=True)
     cache.write_text(json.dumps(rows, indent=1))
     return rows
+
+
+def load_eval_set(name: str) -> list[dict]:
+    if name == "math500":
+        return load_math500()
+    if name == "gsm8k":
+        return load_gsm8k_test()
+    if name in ("aime", "aime2024"):
+        return load_aime(2024)
+    if name == "aime2025":
+        return load_aime(2025)
+    raise ValueError(f"unknown eval set {name!r}")
