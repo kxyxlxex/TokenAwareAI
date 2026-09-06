@@ -106,7 +106,7 @@ def main() -> int:
     p.add_argument("--seeds", type=int, nargs="+", default=[0])
     p.add_argument("--probe", default=None, help="probe.pt for the probe-scored arms")
     p.add_argument("--width", type=int, default=3, help="candidate next steps per expansion")
-    p.add_argument("--branch-max-tokens", type=int, default=160)
+    p.add_argument("--branch-max-tokens", type=int, default=48)
     p.add_argument("--eta", type=float, default=0.2, help="stop branching below this remaining fraction")
     p.add_argument("--alpha-max", type=float, default=8.0)
     p.add_argument("--greedy", action="store_true", help="argmax selection instead of sampling")

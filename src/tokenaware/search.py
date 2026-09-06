@@ -315,7 +315,7 @@ class SearchConfig:
     arm: str = "vt"
     budget: int = 512
     width: int = 3
-    branch_max_tokens: int = 160
+    branch_max_tokens: int = 48
     eta: float = 0.2  # below this remaining fraction, stop branching
     alpha_max: float = 8.0
     greedy: bool = False
@@ -731,7 +731,10 @@ class HFGenerator:
 
         ids = self._prompt_cache.get(problem)
         if ids is None:
-            ids = self.tokenizer(build_prompt(self.tokenizer, problem))["input_ids"]
+            # Force the format header in the prompt so the first sampled
+            # step is "- Step 1: ...", not a wasted "Reasoning Steps:\n" node.
+            prompt = build_prompt(self.tokenizer, problem) + "Reasoning Steps:\n"
+            ids = self.tokenizer(prompt)["input_ids"]
             self._prompt_cache[problem] = ids
         return ids
 
