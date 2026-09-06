@@ -251,58 +251,56 @@ def load_gsm8k_test(local_dir: Path | None = None) -> list[dict]:
     return rows
 
 
-AIME2024_DATASET_ID = "HuggingFaceH4/aime_2024"
-AIME2025_DATASET_ID = "math-ai/aime25"
+AIME24_DATASET_ID = "Maxwell-Jia/AIME_2024"  # 30 rows, ~41 KiB
+AIME25_DATASET_ID = "math-ai/aime25"  # 30 rows, ~31 KiB
 
 
-def _aime_row(problem: str, answer, problem_id: str) -> dict:
-    gold = str(answer).strip().replace(",", "")
-    return {
-        "problem_id": problem_id,
-        "subject": "aime",
-        "level": 0,
-        "problem": problem,
-        "gold": gold,
-    }
+def _aime_gold(ex: dict) -> str:
+    keys = {str(k).lower(): k for k in ex.keys()}
+    for name in ("answer", "gold", "final_answer"):
+        k = keys.get(name)
+        if k is not None and ex[k] is not None and str(ex[k]).strip():
+            return str(ex[k]).strip().replace(",", "")
+    return ""
 
 
-def load_aime(year: int = 2024, local_dir: Path | None = None) -> list[dict]:
-    """AIME I+II for one year (30 problems). Tiny; safe to cache as JSON.
-
-    2024: ``HuggingFaceH4/aime_2024`` (community standard for LLM evals).
-    2025: ``math-ai/aime25``.
-    """
+def load_aime(year: str, local_dir: Path | None = None) -> list[dict]:
+    """AIME I+II for 2024 or 2025. Tiny (30 problems, tens of KiB)."""
     root = local_dir or DATASETS_DIR
     cache = root / f"aime{year}.json"
     if cache.is_file():
         return json.loads(cache.read_text())
-
     from datasets import load_dataset
 
-    rows: list[dict] = []
-    if year == 2024:
-        ds = load_dataset(AIME2024_DATASET_ID, split="train")
-        for ex in ds:
-            pid = f"aime2024:{ex.get('id', len(rows))}"
-            rows.append(_aime_row(ex["problem"], ex["answer"], pid))
-    elif year == 2025:
-        ds = None
-        for split in ("train", "test", "default"):
-            try:
-                ds = load_dataset(AIME2025_DATASET_ID, split=split)
-                break
-            except Exception:
-                continue
-        if ds is None:
-            ds = load_dataset(AIME2025_DATASET_ID)
-            ds = ds[next(iter(ds))]
-        for i, ex in enumerate(ds):
-            problem = ex.get("problem") or ex.get("question")
-            answer = ex.get("answer")
-            rows.append(_aime_row(problem, answer, f"aime2025:{i+1:02d}"))
-    else:
-        raise ValueError(f"unsupported AIME year {year}")
+    if year not in ("2024", "2025"):
+        raise ValueError("year must be '2024' or '2025'")
+    ds = load_dataset(
+        AIME24_DATASET_ID if year == "2024" else AIME25_DATASET_ID, split="train"
+    )
+    rows = []
+    for i, ex in enumerate(ds):
+        keys = {str(k).lower(): k for k in ex.keys()}
 
+        def get(*names):
+            for n in names:
+                k = keys.get(n.lower())
+                if k is not None and ex[k] is not None:
+                    return ex[k]
+            return None
+
+        pid = get("ID", "id", "unique_id") or f"{year}-{i+1}"
+        problem = get("Problem", "problem", "question")
+        if not problem:
+            continue
+        rows.append(
+            {
+                "problem_id": f"aime{year}:{pid}",
+                "subject": "aime",
+                "level": 5,
+                "problem": str(problem),
+                "gold": _aime_gold(ex),
+            }
+        )
     cache.parent.mkdir(parents=True, exist_ok=True)
     cache.write_text(json.dumps(rows, indent=1))
     return rows
@@ -313,8 +311,10 @@ def load_eval_set(name: str) -> list[dict]:
         return load_math500()
     if name == "gsm8k":
         return load_gsm8k_test()
-    if name in ("aime", "aime2024"):
-        return load_aime(2024)
-    if name == "aime2025":
-        return load_aime(2025)
+    if name == "aime24":
+        return load_aime("2024")
+    if name == "aime25":
+        return load_aime("2025")
+    if name == "aime":
+        return load_aime("2024") + load_aime("2025")
     raise ValueError(f"unknown eval set {name!r}")
