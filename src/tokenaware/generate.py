@@ -78,6 +78,11 @@ def load_model(
     return model, tokenizer
 
 
+THINK_USER_PROMPT = (
+    "Solve the problem. Put the final answer after the reasoning, in \\boxed{}."
+)
+
+
 def build_prompt(tokenizer, problem: str) -> str:
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -93,17 +98,18 @@ def build_prompt(tokenizer, problem: str) -> str:
         return tokenizer.apply_chat_template(messages, **kwargs)
 
 
-R1_USER_SUFFIX = (
-    "\nPlease reason step by step, and put your final answer within \\boxed{}."
-)
-
-
-def build_r1_prompt(tokenizer, problem: str) -> str:
-    """Chat template for DeepSeek-R1-Distill (native <think>, no Qwen3 system CoT)."""
-    messages = [{"role": "user", "content": problem.rstrip() + R1_USER_SUFFIX}]
-    return tokenizer.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True
-    )
+def build_think_prompt(tokenizer, problem: str, thinking: bool = True) -> str:
+    """Native Qwen3 thinking template. No one-line step protocol."""
+    messages = [
+        {"role": "user", "content": f"{THINK_USER_PROMPT}\n\n{problem}"},
+    ]
+    kwargs = {"tokenize": False, "add_generation_prompt": True}
+    try:
+        return tokenizer.apply_chat_template(
+            messages, enable_thinking=thinking, **kwargs
+        )
+    except TypeError:
+        return tokenizer.apply_chat_template(messages, **kwargs)
 
 
 def _finished_generation(
@@ -363,6 +369,11 @@ def generate_continuations_batch(
 
 
 def _prompt_plus_prefix_ids(tokenizer, request: dict, eos_ids: set[int]) -> list[int]:
+    if request.get("full_ids"):
+        ids = list(request["full_ids"])
+        if ids and ids[-1] in eos_ids:
+            ids = ids[:-1]
+        return ids
     prompt_ids = tokenizer(build_prompt(tokenizer, request["problem"]))["input_ids"]
     prefix_ids = list(request.get("prefix_token_ids") or [])
     if not prefix_ids and request.get("prefix"):
@@ -436,14 +447,19 @@ def capture_state_vectors(
     model,
     tokenizer,
     requests: list[dict],
+    layers: tuple[int, ...] | None = None,
 ) -> list[dict[str, torch.Tensor]]:
     """Hidden vectors at the final token of each ``prompt + prefix`` sequence.
 
     Used for states that were not produced by a root rollout (sibling branches),
     where no step-boundary tensor exists in the root ``.pt`` sidecar.
+    Pass ``full_ids`` on a request to skip the non-thinking chat template.
+    ``layers`` defaults to all Phase-0 probe layers; thinking capture should
+    pass ``(26,)`` only so a 20 GiB MIG does not hold four [seq, 4096] maps.
     """
     if not requests:
         return []
+    layer_ids = tuple(PROBE_LAYER_INDICES if layers is None else layers)
     _prepare_tokenizer_for_batch(tokenizer)
     eos_ids = _eos_ids(tokenizer)
     sequences = [
@@ -460,7 +476,7 @@ def capture_state_vectors(
     input_ids = input_ids.to(device)
     attention_mask = attention_mask.to(device)
 
-    with hidden_state_hooks(model, PROBE_LAYER_INDICES) as cache:
+    with hidden_state_hooks(model, layer_ids) as cache:
         model(input_ids, attention_mask=attention_mask, use_cache=False)
         cpu_cache = {
             idx: t.to(dtype=torch.float16, device="cpu") for idx, t in cache.items()
