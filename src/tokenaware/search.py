@@ -836,11 +836,19 @@ class HFGenerator:
         for i, s in enumerate(seqs):
             input_ids[i, : len(s)] = torch.tensor(s, dtype=torch.long)
             attention[i, : len(s)] = 1
+        # Run the backbone only. CausalLM.forward materialises full-seq logits
+        # through lm_head (~vocab × hidden × batch × length), which OOMs a 20 GiB
+        # card; the hooks already sit on model.model.layers.
+        backbone = getattr(self.model, "model", self.model)
         with hidden_state_hooks(self.model, self.layers) as cache:
-            self.model(
-                input_ids.to(device), attention_mask=attention.to(device), use_cache=False
+            backbone(
+                input_ids.to(device),
+                attention_mask=attention.to(device),
+                use_cache=False,
             )
             cpu = {k: t.to(dtype=torch.float16, device="cpu") for k, t in cache.items()}
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
         out = []
         for i, s in enumerate(seqs):
             vecs = last_token_vectors(cpu, len(s) - 1, batch=i)

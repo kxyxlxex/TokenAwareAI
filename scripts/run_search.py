@@ -114,7 +114,7 @@ def main() -> int:
     p.add_argument("--limit", type=int, default=0, help="first N problems (0 = all)")
     p.add_argument("--offset", type=int, default=0)
     p.add_argument("--levels", type=int, nargs="+", default=None)
-    p.add_argument("--batch-size", type=int, default=24)
+    p.add_argument("--batch-size", type=int, default=8)
     p.add_argument("--model", default=None)
     p.add_argument("--dtype", default="auto", choices=("auto", "float16", "bfloat16"))
     p.add_argument("--device", default="cuda")
