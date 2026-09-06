@@ -66,12 +66,43 @@ def generate_ids(model, tokenizer, input_ids: torch.Tensor, max_new: int) -> lis
     return new_ids
 
 
-def load_problems(artifacts: Path, levels: list[int], limit: int) -> list[dict]:
+def load_pool(artifacts: Path) -> list[dict]:
     split_path = artifacts / "splits" / "math_probe_split.json"
     if split_path.is_file():
-        rows = load_split(split_path)["train"]
-    else:
-        rows = load_math_train()
+        return load_split(split_path)["train"]
+    return load_math_train()
+
+
+def parse_level_counts(specs: list[str]) -> dict[int, int]:
+    """``['5:100', '4:60']`` → ``{5: 100, 4: 60}``."""
+    out: dict[int, int] = {}
+    for spec in specs:
+        level_s, n_s = spec.split(":", 1)
+        out[int(level_s)] = int(n_s)
+    return out
+
+
+def load_problems(
+    artifacts: Path,
+    levels: list[int],
+    limit: int,
+    level_counts: dict[int, int] | None = None,
+) -> list[dict]:
+    rows = load_pool(artifacts)
+    if level_counts:
+        by_level: dict[int, list[dict]] = {}
+        for row in rows:
+            by_level.setdefault(int(row.get("level") or 0), []).append(row)
+        picked: list[dict] = []
+        for level, n in sorted(level_counts.items(), reverse=True):
+            bucket = by_level.get(level) or []
+            if len(bucket) < n:
+                print(
+                    f"warning: only {len(bucket)} train problems at level {level}, want {n}",
+                    flush=True,
+                )
+            picked.extend(bucket[:n])
+        return picked
     rows = [r for r in rows if int(r.get("level") or 0) in set(levels)]
     return rows[:limit]
 
@@ -91,6 +122,13 @@ def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--limit", type=int, default=20)
     p.add_argument("--levels", type=int, nargs="+", default=[5])
+    p.add_argument(
+        "--level-counts",
+        nargs="+",
+        default=None,
+        metavar="L:N",
+        help="quota per MATH level, e.g. 5:100 4:60. Overrides --limit/--levels.",
+    )
     p.add_argument("--k", type=int, default=2, help="MC completions per sibling")
     p.add_argument("--width", type=int, default=2)
     p.add_argument("--parent-tokens", type=int, default=1024)
@@ -112,11 +150,12 @@ def main() -> int:
             rec = json.loads(line)
             done.add(rec["problem_id"])
 
-    problems = load_problems(ARTIFACTS_DIR, args.levels, args.limit)
+    counts = parse_level_counts(args.level_counts) if args.level_counts else None
+    problems = load_problems(ARTIFACTS_DIR, args.levels, args.limit, counts)
     pending = [q for q in problems if q["problem_id"] not in done]
     print(
         f"[{stamp()}] thinking siblings: {len(pending)}/{len(problems)} pending "
-        f"L{args.levels} width={args.width} k={args.k} "
+        f"quotas={counts or args.levels} width={args.width} k={args.k} "
         f"parent={args.parent_tokens} peek={args.peek_tokens} "
         f"complete={args.complete_tokens} layer={args.layer}",
         flush=True,
