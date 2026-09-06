@@ -172,6 +172,7 @@ def load_split(path: Path) -> dict:
 # --------------------------------------------------------------------------- #
 MATH500_DATASET_ID = "HuggingFaceH4/MATH-500"
 GSM8K_DATASET_ID = "openai/gsm8k"
+AIME24_DATASET_ID = "HuggingFaceH4/aime_2024"
 
 _SUBJECT_ALIASES = {
     "algebra": "algebra",
@@ -256,4 +257,33 @@ def load_eval_set(name: str) -> list[dict]:
         return load_math500()
     if name == "gsm8k":
         return load_gsm8k_test()
+    if name in ("aime24", "aime"):
+        return load_aime24()
     raise ValueError(f"unknown eval set {name!r}")
+
+
+def load_aime24(local_dir: Path | None = None) -> list[dict]:
+    """AIME 2024 (30 problems). Long-CoT length probe, not a headline n=30 paper eval."""
+    root = local_dir or DATASETS_DIR
+    cache = root / "aime24.json"
+    if cache.is_file():
+        return json.loads(cache.read_text())
+
+    from datasets import load_dataset
+
+    ds = load_dataset(AIME24_DATASET_ID, split="train")
+    rows = []
+    for i, ex in enumerate(ds):
+        gold = str(ex.get("answer", "")).strip()
+        rows.append(
+            {
+                "problem_id": f"aime24:{i:02d}",
+                "subject": "aime",
+                "level": 5,
+                "problem": ex["problem"],
+                "gold": gold,
+            }
+        )
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_text(json.dumps(rows, indent=1))
+    return rows

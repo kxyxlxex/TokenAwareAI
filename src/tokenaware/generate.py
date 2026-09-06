@@ -93,6 +93,19 @@ def build_prompt(tokenizer, problem: str) -> str:
         return tokenizer.apply_chat_template(messages, **kwargs)
 
 
+R1_USER_SUFFIX = (
+    "\nPlease reason step by step, and put your final answer within \\boxed{}."
+)
+
+
+def build_r1_prompt(tokenizer, problem: str) -> str:
+    """Chat template for DeepSeek-R1-Distill (native <think>, no Qwen3 system CoT)."""
+    messages = [{"role": "user", "content": problem.rstrip() + R1_USER_SUFFIX}]
+    return tokenizer.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True
+    )
+
+
 def _finished_generation(
     gen_ids: list[int],
     max_new_tokens: int,
