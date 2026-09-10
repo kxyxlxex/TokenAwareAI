@@ -24,7 +24,8 @@ from .train import TrainConfig, forward_batch
 
 DEFAULT_BUDGETS = (64, 128, 256, 512)
 # Minimum |ΔT̂| in tokens for a sibling pair to count as decidable.
-T_GAP_THRESHOLDS = (20, 50)
+# 20/50 = Phase 0 near-tie cuts. 256/512 = thinking peek tax τ and 2τ.
+T_GAP_THRESHOLDS = (20, 50, 256, 512)
 
 
 @torch.no_grad()

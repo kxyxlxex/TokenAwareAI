@@ -5,13 +5,7 @@
       --src $TOKENAWARE_ARTIFACTS/thinking/siblings \
       --out $TOKENAWARE_ARTIFACTS/cache/thinking_pilot
 
-Then:
-  python scripts/train_probe.py \
-      --cache $TOKENAWARE_ARTIFACTS/cache/thinking_pilot \
-      --task joint --trunk mlp --t-head dist --layers 26 \
-      --max-tokens 8192 --no-same-trace \
-      --epochs 8 --mc-finetune-epochs 0 --batch-size 32 \
-      --out $TOKENAWARE_ARTIFACTS/probes/thinking_l26
+Then follow ``thinking-t-train.md`` (T-only, max_tokens 16384). Do not train V.
 """
 
 from __future__ import annotations
